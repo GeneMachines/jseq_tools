@@ -1,24 +1,29 @@
 #!/usr/bin/python
 
 from Bio import SeqIO
-from optparse import OptionParser
+import argparse #replaced the depreciated optparse
 import re
 
 
 def opts():
-    usage = "Usage: python jseq_tools.py [options] <input file> <file type>\n"
-    parser = OptionParser(usage=usage)
-    parser.add_option("--fmts", action="store_true", default=False,
-                      help="prints a list of compatible formats")
-    parser.add_option("--count", "-c", dest="length", type="int", default=False,
-                      help="counts all sequences over <int> length")
-    parser.add_option("--filter", "-f", dest="filt", type="int" ,default=False,
-                      help="saves file of all sequences over <int> length")
-    parser.add_option("--extract", "-e", dest="ident", default=False,
-                      help="saves a file of sequences extracted from a list of ids")
-    (options, args) = parser.parse_args()
+    usage = "python jseq_tools.py [options] <input file> <file type>\n"
+    parser = argparse.ArgumentParser(usage=usage)
+    group = parser.add_mutually_exclusive_group()
+    parser.add_argument("--fmts", action="store_true", default=False,
+                       help="prints a list of compatible formats for counting")
+    group.add_argument("--count", "-c", dest="c_length", type=int, default=False,
+                       help="counts all sequences over <int> length")
+    group.add_argument("--filter", "-f", dest="f_length", type=int ,default=False,
+                       help="saves file of all sequences over <int> length")
+    group.add_argument("--extract", "-e", dest="ident", default=False,
+                       help="saves a file of sequences extracted from a list of ids")
+    parser.add_argument("input_file", type=str,
+                        help="The input sequence file")
+    parser.add_argument("file_type", type=str,
+                        help="The input file format")
+    args = parser.parse_args()
 
-    if options.fmts:
+    if args.fmts:
         print usage
         print "\nFormats:"
         print "\
@@ -26,11 +31,11 @@ def opts():
         \tline starting with a '>' character, followed by lines of sequence.\n\
         fastq-\tA 'FASTA like' format used by Sanger which also stores PHRED sequence quality\n\
         \tvalues (with an ASCII offset of 33).\n\
-        genbank-\tThe GenBank or GenPept flat file format.\n\
+        genbank-The GenBank or GenPept flat file format.\n\
         swiss-\tPlain text Swiss-Prot aka UniProt format.\n\
         tab-\tSimple two column tab separated sequence files, where each line holds a record's\n\
-        \tidentifier and sequence. For example, this is used as by Aligent's eArray software when\n\
-        \tsaving microarray probes in a minimal tab delimited text file.\n\
+        \tidentifier and sequence. For example, this is used as by Aligent's eArray software\n\
+        \twhen saving microarray probes in a minimal tab delimited text file.\n\
         qual-\tA 'FASTA like' format holding PHRED quality values from sequencing DNA, but no\n\
         \tactual sequences (usually provided in separate FASTA files).\n\
         uniprot-xml-\tThe UniProt XML format (replacement for the SwissProt plain text format\n\
@@ -38,14 +43,16 @@ def opts():
         \n\tFor a full listing check Biopython SeqIO doumentation.\n"
         exit(0)
 
+    """
     try:
-        in_file, fmt = args
+      >>> import jseq_tools_argparse
+  in_file, fmt = args
     except ValueError:
         print "\nIncorrect number of arguments!\n"
         print usage
         exit(1)
-
-    return in_file, fmt, options
+    """
+    return args
 
 
 def counting(records, length):
@@ -112,20 +119,27 @@ def extract_by_id(records, ids, in_file, fmt):
     That subset of records are then written to file using the file name as a base.
     """
 
+    ##todo## 
+    #generalise the regular expression so that it matches any unique string within the seq ID.
+    #currently the regex is selective for contig_1 over contig_10 or contig_111 but requires
+    #a change from digit type to non-digit ("\d" --> "\D") and would therefore fail to distinguish 
+    #1_contig_illumina from 11_contig_illumina.
+    #...maybe giving the user an option to enter their own regex would be the best solution...
+
     #extracts the records based on a regex using the id.
     #assumes the id is not followed by a digit character.
     interesting_records = []
     for rec in records:
         for ID in ids:
-            regex = re.compile(ID + "\D" + "|" + ID + "$" )
+            regex = re.compile(ID + "\D" + "|" + ID + "$")
             match = re.search(regex, rec.id)
             if match:
                 interesting_records.append(rec)
-    for rec in interesting_records:
-        print rec.description
+    #for rec in interesting_records:
+    #    print rec.description
 
     outname = in_file.split(".")
-    outname = "".join(outname[:-1])+"_ids."+outname[-1]
+    outname = "".join(outname[:-1])+"_extracted_ids."+outname[-1]
     SeqIO.write(interesting_records, outname, fmt)
 
 
@@ -134,22 +148,22 @@ def main():
     This function decides which functions to run.
     """
 
-    in_file, fmt, options = opts()
+    args = opts() #parse args from command line
 
-    handle = open(in_file, "rb") #opens file      
-    records = SeqIO.parse(handle, fmt) #parses file
+    handle = open(args.input_file, "rb") #opens file
+    records = SeqIO.parse(handle, args.file_type) #parses file
 
-    if options.filt:
-        length = options.filt
-        filter_contigs(records, length, in_file, fmt)
-    elif options.ident:
-        ids = id_parse(options.ident)
-        extract_by_id(records, ids, in_file, fmt)
-    elif options.length:
-        counting(records, options.length)
+    if args.f_length:
+        filter_contigs(records, args.f_length, args.input_file, args.file_type)
+    elif args.ident:
+        ids = id_parse(args.ident)
+        extract_by_id(records, ids, args.input_file, args.file_type)
+    elif args.c_length:
+        counting(records, args.c_length)
     else:
         print "No command given."
 
 
+print __name__
 if __name__ == '__main__':
     main()
