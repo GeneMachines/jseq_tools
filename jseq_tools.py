@@ -145,7 +145,8 @@ def extract_by_id(records, ids, in_file, fmt):
 
 def main():
     """
-    This function decides which functions to run.
+    jseq_tools is a collection of simple bioinformatics record manipulation tools.
+    This function decides which functions to run based on user command line input.
     """
 
     args = opts() #parse args from command line
