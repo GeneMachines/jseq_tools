@@ -3,6 +3,7 @@
 from Bio import SeqIO
 import argparse #replaced the depreciated optparse
 import re
+import sys
 
 
 def opts():
@@ -13,10 +14,12 @@ def opts():
                        help="prints a list of compatible formats for counting")
     group.add_argument("--count", "-c", dest="c_length", type=int, default=False,
                        help="counts all sequences over <int> length")
-    group.add_argument("--filter", "-f", dest="f_length", type=int ,default=False,
+    group.add_argument("--large", "-l", dest="f_length", type=int ,default=False,
                        help="saves file of all sequences over <int> length")
     group.add_argument("--extract", "-e", dest="ident", default=False,
                        help="saves a file of sequences extracted from a list of ids")
+    parser.add_argument("--fast", "-f", action="store_true", default=False,
+                       help="use a faster, more memory intensive method of id extraction")
     parser.add_argument("input_file", type=str,
                         help="The input sequence file")
     parser.add_argument("file_type", type=str,
@@ -101,44 +104,98 @@ def id_parse(ids_handle):
     """
     Takes a file of ids and returns the ids as a list.
     Currently assumes each id is on a seperate line.
+
+    Extracts only the identifying contig id number from the list of ids.
+
+
+    This tries to generalise the extraction function by first sanitising the ids.
+    it will fail if any other digits exist in the id after the identifying
+    contig number and not seperated by a space
+
     """
     ##todo## be more flexible with input. Eg comma seperated list in file or cmd line.
 
     ids_handle = open(ids_handle, "r")
     ids = []
-    for ID in ids_handle.readlines():
+    for i, ID in enumerate(ids_handle.readlines()):
         ID = ID.strip()
         ids.append(ID)
-    
+        ID = ID.split()[0]
+        match = re.search("(\d+).?$", ID)
+        if match:
+            ids[i] = match.group(1)
+        else:
+            exit(1)
+
     return ids
 
 
-def extract_by_id(records, ids, in_file, fmt):
+def get_contig_id(record):
+    """
+    Takes a record id and returns the contig_#.
+    """
+
+    regex = re.compile("[C|c]ontig.*?(\d+)$")
+    match = re.search(regex, record.id)
+    if match:
+        return match.group(1)
+    else:
+        regex = re.compile("[C|c]ontig.*?(\d+)\D")
+        match = re.search(regex, identifier)
+        if match:
+            return match.group(1)
+
+def loop_extract(records, ids):    # slow version using a for loop
+    """
+    Loops through the sequence records looking for the id in the record.id.
+    Works fine provided there aren't too many sequences AND ids.
+    """
+    interesting_records = []
+    for rec in records:
+        if len(ids) > 0:
+            for ID in ids:
+                regex = re.compile("\D" + ID + "$" +"|" + "[C|c]ontig[-_ ]" + ID + "\D")
+                match = re.search(regex, rec.id)
+                if match:
+                    interesting_records.append(rec)
+                    ids.remove(ID)
+        else:
+            break
+    
+    if ids:
+        print "\nWarning: couldn't find contigs corresponding to the ids: %s" % ("\n".join(ids))
+
+    return interesting_records
+
+
+def index_extract(in_file, ids, fmt):    # fast, memory intensive version
+    """
+    Pulls a records file into memory with the SeqIO.to_dict method. The contigs of 
+    interest are then extracted using a list comprehension. Fast but memory intensive.
+    """
+    temp_dict = SeqIO.to_dict(SeqIO.parse(in_file, fmt), key_function=get_contig_id)
+    try:
+        interesting_records = [temp_dict[x] for x in ids]
+    except KeyError:
+        print "\nCannot extract, invalid id: %s" % (sys.exc_info()[1])
+        exit(1)
+
+    return interesting_records
+
+
+def extract_by_id(records, ids, in_file, fmt, fast):
     """
     Takes a record file and a list of ids and extracts the records corresponding to those ids.
     That subset of records are then written to file using the file name as a base.
-    """
+    """    
 
-    ##todo## 
-    #generalise the regular expression so that it matches any unique string within the seq ID.
-    #currently the regex is selective for contig_1 over contig_10 or contig_111 but requires
-    #a change from digit type to non-digit ("\d" --> "\D") and would therefore fail to distinguish 
-    #1_contig_illumina from 11_contig_illumina.
-    #...maybe giving the user an option to enter their own regex would be the best solution...
-
-    #extracts the records based on a regex using the id.
-    #assumes the id is not followed by a digit character.
-    interesting_records = []
-    for rec in records:
-        for ID in ids:
-            regex = re.compile(ID + "\D" + "|" + ID + "$")
-            match = re.search(regex, rec.id)
-            if match:
-                interesting_records.append(rec)
-    #for rec in interesting_records:
-    #    print rec.description
-
-    outname = in_file.split(".")
+    if fast:
+        interesting_records = index_extract(in_file, ids, fmt)
+    else:
+        interesting_records = loop_extract(records, ids)
+    
+    outname = in_file.split("/")[-1]
+    outname = outname.split(".")
     outname = "".join(outname[:-1])+"_extracted_ids."+outname[-1]
     SeqIO.write(interesting_records, outname, fmt)
 
@@ -146,25 +203,27 @@ def extract_by_id(records, ids, in_file, fmt):
 def main():
     """
     jseq_tools is a collection of simple bioinformatics record manipulation tools.
-    This function decides which functions to run based on user command line input.
+    This function decides which functions to run based on user command-line input.
     """
 
     args = opts() #parse args from command line
 
     handle = open(args.input_file, "rb") #opens file
-    records = SeqIO.parse(handle, args.file_type) #parses file
+    if args.fast:
+        records = handle
+    else:
+        records = SeqIO.parse(handle, args.file_type) #parses file
 
     if args.f_length:
         filter_contigs(records, args.f_length, args.input_file, args.file_type)
     elif args.ident:
         ids = id_parse(args.ident)
-        extract_by_id(records, ids, args.input_file, args.file_type)
-    elif args.c_length:
+        extract_by_id(records, ids, args.input_file, args.file_type, args.fast)
+    elif type(args.c_length) == int:
         counting(records, args.c_length)
     else:
         print "No command given."
 
 
-print __name__
 if __name__ == '__main__':
     main()
